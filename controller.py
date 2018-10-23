@@ -17,7 +17,11 @@ from pox.lib.revent import *
 from pox.lib.util import dpid_to_str
 from pox.lib.addresses import IPAddr, EthAddr
 
+import time
+
 log = core.getLogger()
+
+MACPORT_TTL = 60
 
 class Controller(EventMixin):
     def __init__(self):
@@ -33,7 +37,9 @@ class Controller(EventMixin):
     For each incoming packet p
         1. update mac to port table 
         2. Is detination mac in mac to port table?
-            2a. Yes -- blindly forward accordingly 
+            2a. Yes. Is TTL expired?
+                2a1. Yes -- flood
+                2a2. No -- blindly forward accordingly 
             2b. No -- flood
     '''
         
@@ -49,7 +55,7 @@ class Controller(EventMixin):
 
         # Step 1
         if dpid not in self.macport: self.macport[dpid] = {}
-        self.macport[dpid][src_mac] = port
+        self.macport[dpid][src_mac] = {'port': port, 'ttl': time.time() + MACPORT_TTL}
 
     	# install entries to the route table
         def install_enqueue(event, packet, outport, q_id):
@@ -63,16 +69,16 @@ class Controller(EventMixin):
                 flood("Switch %s: Multicast" % (dpid,))
                 return
 
-            if dst_mac not in self.macport[dpid]:
+            # Step 2a1 and 2b  
+            if (dst_mac not in self.macport[dpid]) or (time.time() > self.macport[dpid][dst_mac]['ttl']):
 
-                # Step 2b
-                flood("Switch %s: Port for %s unknown -- flooding" % (dpid, dst_mac,))
+                flood("Switch %s: Port for %s unknown/timeout -- flooding" % (dpid, dst_mac,))
                 return
 
             q_id = get_q_id()
-            outport = self.macport[dpid][dst_mac]
+            outport = self.macport[dpid][dst_mac]['port']
 
-            # Step 2a
+            # Step 2a2
             blind_forward(event, packet, outport)
 
             return
@@ -118,13 +124,55 @@ class Controller(EventMixin):
     def _handle_ConnectionUp(self, event):
         dpid = dpid_to_str(event.dpid)
         log.debug("Switch %s has come up.", dpid)
+
+        def readPoliciesFromFile(file):
+            fw_policies = []
+            service_class = []
+
+            with open(file) as fd:
+                N, M = fd.readline().split()
+                for i in range(int(N)):
+                    params = [x.strip() for x in fd.readline().split(",")]
+                    if len(params) == 1:
+                        fw_policies.append((params[0], None, None))
+                    elif len(params) == 2:
+                        fw_policies.append((None, params[0], params[1]))
+                    else:
+                        fw_policies.append(params)
+
+            return fw_policies, service_class
         
         # Send the firewall policies to the switch
         def sendFirewallPolicy(connection, policy):
-            pass
+            from_IP, to_IP, to_port = policy
+            log.debug("Switch %s: Adding Firewall Rule Src: %s, Dst: %s:%s" % (dpid, from_IP, to_IP, to_port))
+            
+            msg = of.ofp_flow_mod()
 
-        # for i in [FIREWALL POLICIES]:
-        #     sendFirewallPolicy(event.connection, i)
+            # Set flow to send to no where
+            msg.actions.append(of.ofp_action_output(port = of.OFPP_NONE))
+
+            # ethernet type should be ipv4 (0x800)
+            msg.match.dl_type = 0x800
+
+            # IP header protocol number should be TCP (6)
+            #   ICMP - 1, UDP - 17
+            msg.match.nw_proto = 6
+
+            # Source IP Address
+            if from_IP: msg.match.nw_src = IPAddr(from_IP)
+            if to_IP: 
+                # Destination IP Address:Port Number
+                msg.match.nw_dst = IPAddr(to_IP)
+                msg.match.tp_dst = int(to_port)
+
+            connection.send(msg)
+            log.debug("Switch %s: Firewall Rule added!" % (dpid, ))
+
+
+        fw_policies, service_class = readPoliciesFromFile("./pox/misc/policy.in")
+        for fw_policy in fw_policies:
+            sendFirewallPolicy(event.connection, fw_policy)
             
 
 def launch():
