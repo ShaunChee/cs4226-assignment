@@ -21,23 +21,25 @@ class TreeTopo(Topo):
         # Initialize topology
         Topo.__init__(self)
 
-    def readFromStdin(self):
-        header = sys.stdin.readline()
-        N, M, L = header.split()
-        for i in range(int(N)):
-            host_number = i + 1
-            self.addHost('h%d' % host_number)
+    def readFromFile(self, filename):
 
-        for i in range(int(M)):
-            switch_number = i + 1
-            sconfig = {'dpid': "%016x" % switch_number}
-            self.addSwitch('s%d' % switch_number, **sconfig)
+        with open(filename) as fd:
+            header = fd.readline()
+            N, M, L = header.split()
+            for i in range(int(N)):
+                host_number = i + 1
+                self.addHost('h%d' % host_number)
 
-        for i in range(int(L)):
-            line = sys.stdin.readline()
-            h1, h2, bw = line.split(",")
-            linkopts = {'bw': int(bw)}
-            self.addLink(h1, h2, **linkopts)
+            for i in range(int(M)):
+                switch_number = i + 1
+                sconfig = {'dpid': "%016x" % switch_number}
+                self.addSwitch('s%d' % switch_number, **sconfig)
+
+            for i in range(int(L)):
+                line = fd.readline()
+                h1, h2, bw = line.split(",")
+                linkopts = {'bw': int(bw)}
+                self.addLink(h1, h2, **linkopts)
 
     
     # You can write other functions as you need.
@@ -55,11 +57,11 @@ class TreeTopo(Topo):
 def startNetwork():
     info('** Creating the tree network\n')
     topo = TreeTopo()
-    topo.readFromStdin()
+    topo.readFromFile("topology.in")
 
     global net
     net = Mininet(topo=topo, link = TCLink,
-                  controller=lambda name: RemoteController(name, ip='SERVER IP'),
+                  controller=lambda name: RemoteController(name, ip='192.168.0.123'),
                   listenPort=6633, autoSetMacs=True)
 
     info('** Starting the network\n')
