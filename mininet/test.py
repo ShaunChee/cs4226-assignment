@@ -17,8 +17,10 @@ def run_tests(net):
 
         if all_slower:
             info ("**** Pingall test success\n")
+            return True
         else:
             info ("**** Pingall test failure\n")
+            return False
 
     def test_specific_tcp_connectivity(net, to_host_num, to_port, from_host=[]):
         to_host_name = "h%d" % to_host_num
@@ -62,35 +64,69 @@ def run_tests(net):
         successes = test_tcp_connectivity(net, 2, 12345)
         if successes:
             info ("**** Firewall with IP failure\n")
+            return False
         else:
             info ("**** Firewall with IP success\n")
+            return True
 
     def test_firewall_ip_port(net):
         info ("**** Testing Firewall with IP and Port\n")
         successes = test_tcp_connectivity(net, 7, 1001)
         if successes:
             info ("**** Firewall with IP and Port failure\n")
+            return False
         else:
             info ("**** Firewall with IP and Port success\n")
+            return True
 
     def test_firewall_src_dst_port(net):
         info ("**** Testing Firewall with Src IP, Dst IP and Port\n")
         successes = test_tcp_connectivity(net, 4, 80)
-        if successes:
-            info ("**** Firewall with Src IP, Src Dst and Port failure\n")
-        else:
+
+        if 'h5' not in successes:
             info ("**** Firewall with Src IP, Src Dst and Port success\n")
+            return True
+        else:
+            info ("**** Firewall with Src IP, Src Dst and Port failure\n")
+            return False
         
 
 
     def test_firewall(net):
-        test_firewall_ip(net)
-        test_firewall_ip_port(net)
-        test_firewall_src_dst_port(net)
+        return test_firewall_ip(net) and \
+                test_firewall_ip_port(net) and \
+                test_firewall_src_dst_port(net)
+
+    def test_service_class_pair(h1, h2, bw1, bw2, lo=0, hi=10):
+        n1 = net.get(h1)
+        n2 = net.get(h2)
+        client, _client = net.iperf([n1, n2])
+        server, _server = net.iperf([n2, n1])
+        server = float(server.split(" ")[0])
+        client = float(client.split(" ")[0])
+        return server >= lo * bw1 and server <= hi * bw1 and \
+                client >= lo * bw2 and client <= hi * bw2
+
+    def test_premium(net):
+        return test_service_class_pair('h1', 'h4', 10, 10, lo=0.8, hi=1) and \
+                test_service_class_pair('h1', 'h6', 10, 10, lo=0.8, hi=1) and \
+                test_service_class_pair('h6', 'h4', 10, 10, lo=0.8, hi=1)
+        
+    def test_regular(net):
+        return test_service_class_pair("h3", "h8", 5, 10, lo=0.3, hi=0.6)
+
+    def test_free(net):
+        
+        return test_service_class_pair("h5", "h7", 5, 5, lo=0, hi=0.2)
+
+    def test_service_class(net):
+        info ("**** Testing Service Class\n")
+        return test_premium(net) and test_regular(net) and test_free(net)
 
     def run(net):
-        test_pingall(net)
-        test_firewall(net)
+        if test_service_class(net):
+            info ("\n** All Test Passed!\n")
+        else: info("\n** Some Test Failed!\n")
 
     run(net)
 
