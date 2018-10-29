@@ -24,6 +24,10 @@ log = core.getLogger()
 IDLE_TTL = 5
 HARD_TTL = 10
 
+REGULAR = 0
+PREMIUM = 1
+FREE = 2
+
 class Controller(EventMixin):
     def __init__(self):
         self.listenTo(core.openflow)
@@ -31,36 +35,36 @@ class Controller(EventMixin):
 
         # 2D mac address to port mapping 
         self.macport = {}
-        
-    # You can write other functions as you need.
 
-    '''
-    For each incoming packet p
-        1. update mac to port table 
-        2. Is detination mac in mac to port table?
-            2a. Yes. Is TTL expired?
-                2a1. Yes -- flood
-                2a2. No -- blindly forward accordingly 
-            2b. No -- flood
-    '''
+        # Maps hosts to their service class
+        self.service_class = {}
         
     def _handle_PacketIn (self, event):  
 
         packet = event.parsed
         src_mac = packet.src # packet's src mac
         dst_mac = packet.dst # packet's dst mac
-        port = event.port # the port where the packet enters
+        inport = event.port # the port where the packet enters
         dpid = event.dpid # switch id  
 
-        log.debug("Switch %s: Recv %s from port %s" % (dpid, packet, port))
+        log.debug("** Switch %s: Recv %s from port %s" % (dpid, packet, inport))
 
         # Update Mac to Port table mapping
         def update_table():
-            self.macport[dpid][src_mac] = port
+            self.macport[dpid][src_mac] = inport
 
     	# install entries to the route table
         def install_enqueue(event, packet, outport, q_id):
-            pass
+            log.debug("** Switch %i: Installing flow %s.%i -> %s.%i", dpid, src_mac, inport, dst_mac, outport)
+            msg = of.ofp_flow_mod()
+            msg.match = of.ofp_match.from_packet(packet, inport)
+            msg.actions.append(of.ofp_action_enqueue(port = outport, queue_id = q_id))
+            msg.data = event.ofp
+            msg.idle_timeout = IDLE_TTL 
+            msg.hard_timeout = HARD_TTL
+            event.connection.send(msg)
+            log.debug("** Switch %i: Rule sent: Outport %i, Queue %i\n", dpid, outport, q_id)
+            return
 
     	# Check the packet and decide how to route the packet
         def forward(message = None):
@@ -71,36 +75,34 @@ class Controller(EventMixin):
 
             # Step 2
             if dst_mac.is_multicast:
-                flood("Switch %s: Multicast" % (dpid,))
+                flood("** Switch %s: Multicast -- flooding" % (dpid,))
                 return
 
             # Step 2a1 and 2b  
             if (dst_mac not in self.macport[dpid]):
-                flood("Switch %s: Port for %s unknown -- flooding" % (dpid, dst_mac,))
+                flood("** Switch %s: Port for %s unknown -- flooding" % (dpid, dst_mac,))
                 return
 
-            q_id = get_q_id()
+            srcIP = None
+            if packet.type == packet.IP_TYPE:
+                srcIP = packet.payload.srcip
+            elif packet.type == packet.ARP_TYPE:
+                srcIP = packet.payload.protosrc
+
+            q_id = get_q_id(str(srcIP))
             outport = self.macport[dpid][dst_mac]
 
             # Step 2a2
-            blind_forward(event, packet, outport)
+            install_enqueue(event, packet, outport, q_id)
 
             return
 
-        def blind_forward(event, packet, outport):
-            log.debug("Switch %s: Blindly forwarding %s:%i - > %s:%i", dpid, src_mac, port, dst_mac, outport)
-            msg = of.ofp_flow_mod();
-            msg.match = of.ofp_match.from_packet(packet, port)
-            msg.idle_timeout = IDLE_TTL 
-            msg.hard_timeout = HARD_TTL
-            msg.actions.append(of.ofp_action_output(port = outport))
-            msg.data = event.ofp
-            event.connection.send(msg)
-            log.debug("Switch %i: Blindly forwarded: Outport %i", dpid, outport)
-
         # get the queue it should go into
-        def get_q_id():
-            return 1
+        def get_q_id(srcIP):
+            if srcIP is None:
+                return REGULAR
+            elif srcIP not in self.service_class: return FREE
+            else: return self.service_class[srcIP]
             
 
         # When it knows nothing about the destination, flood but don't install the rule
@@ -117,7 +119,7 @@ class Controller(EventMixin):
             msg.data = event.ofp
 
             # Set the in_port so that the switch knows
-            msg.in_port = event.port
+            msg.in_port = inport
 
             # Sends the packet out
             event.connection.send(msg)
@@ -133,7 +135,6 @@ class Controller(EventMixin):
 
         def readPoliciesFromFile(file):
             fw_policies = []
-            service_class = []
 
             with open(file) as fd:
                 N, M = fd.readline().split()
@@ -146,12 +147,19 @@ class Controller(EventMixin):
                     else:
                         fw_policies.append(params)
 
-            return fw_policies, service_class
+                for i in range(int(M)):
+                    ip, service_class_value = [x.strip() for x in fd.readline().split(",")]
+                    log.debug("** Switch %s: Saving Service Class Rule Src %s, Class: %s" % (dpid, ip, service_class_value))
+                    self.service_class[ip] = int(service_class_value)
+                    print(self.service_class)
+                    log.debug("** Switch %s: Saved Service Class Rule Src %s, Class: %s" % (dpid, ip, service_class_value))
+
+            return fw_policies
         
         # Send the firewall policies to the switch
         def sendFirewallPolicy(connection, policy):
             from_IP, to_IP, to_port = policy
-            log.debug("Switch %s: Adding Firewall Rule Src: %s, Dst: %s:%s" % (dpid, from_IP, to_IP, to_port))
+            log.debug("** Switch %s: Adding Firewall Rule Src: %s, Dst: %s:%s" % (dpid, from_IP, to_IP, to_port))
             
             msg = of.ofp_flow_mod()
 
@@ -173,10 +181,10 @@ class Controller(EventMixin):
                 msg.match.tp_dst = int(to_port)
 
             connection.send(msg)
-            log.debug("Switch %s: Firewall Rule added!" % (dpid, ))
+            log.debug("** Switch %s: Firewall Rule added!" % (dpid, ))
 
 
-        fw_policies, service_class = readPoliciesFromFile("./pox/misc/policy.in")
+        fw_policies = readPoliciesFromFile("./pox/misc/policy.in")
         for fw_policy in fw_policies:
             sendFirewallPolicy(event.connection, fw_policy)
             
