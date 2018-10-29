@@ -17,11 +17,12 @@ from pox.lib.revent import *
 from pox.lib.util import dpid_to_str
 from pox.lib.addresses import IPAddr, EthAddr
 
-import time
+import datetime
 
 log = core.getLogger()
 
-MACPORT_TTL = 60
+IDLE_TTL = 5
+HARD_TTL = 10
 
 class Controller(EventMixin):
     def __init__(self):
@@ -53,9 +54,9 @@ class Controller(EventMixin):
 
         log.debug("Switch %s: Recv %s from port %s" % (dpid, packet, port))
 
-        # Step 1
-        if dpid not in self.macport: self.macport[dpid] = {}
-        self.macport[dpid][src_mac] = {'port': port, 'ttl': time.time() + MACPORT_TTL}
+        # Update Mac to Port table mapping
+        def update_table():
+            self.macport[dpid][src_mac] = port
 
     	# install entries to the route table
         def install_enqueue(event, packet, outport, q_id):
@@ -64,19 +65,22 @@ class Controller(EventMixin):
     	# Check the packet and decide how to route the packet
         def forward(message = None):
 
+            # Step 1
+            if dpid not in self.macport: self.macport[dpid] = {}
+            update_table();
+
             # Step 2
             if dst_mac.is_multicast:
                 flood("Switch %s: Multicast" % (dpid,))
                 return
 
             # Step 2a1 and 2b  
-            if (dst_mac not in self.macport[dpid]) or (time.time() > self.macport[dpid][dst_mac]['ttl']):
-
-                flood("Switch %s: Port for %s unknown/timeout -- flooding" % (dpid, dst_mac,))
+            if (dst_mac not in self.macport[dpid]):
+                flood("Switch %s: Port for %s unknown -- flooding" % (dpid, dst_mac,))
                 return
 
             q_id = get_q_id()
-            outport = self.macport[dpid][dst_mac]['port']
+            outport = self.macport[dpid][dst_mac]
 
             # Step 2a2
             blind_forward(event, packet, outport)
@@ -87,6 +91,8 @@ class Controller(EventMixin):
             log.debug("Switch %s: Blindly forwarding %s:%i - > %s:%i", dpid, src_mac, port, dst_mac, outport)
             msg = of.ofp_flow_mod();
             msg.match = of.ofp_match.from_packet(packet, port)
+            msg.idle_timeout = IDLE_TTL 
+            msg.hard_timeout = HARD_TTL
             msg.actions.append(of.ofp_action_output(port = outport))
             msg.data = event.ofp
             event.connection.send(msg)
