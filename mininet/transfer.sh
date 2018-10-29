@@ -1,1 +1,1 @@
-scp mininetTopo.py topology.in mininet@192.168.56.101:~
+scp mininetTopo.py topology.in run_mininet.sh mininetSetup.sh test.py mininet@192.168.56.101:~
