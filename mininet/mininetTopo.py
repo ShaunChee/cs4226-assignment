@@ -62,7 +62,7 @@ class TreeTopo(Topo):
     # Add links
     # > self.addLink([HOST1], [HOST2])
 
-def createQosQueue(net, switch_interface, bw):
+def createQosQueue(net, target, switch_interface, bw):
 
     # Values in unit Mbps
     bw = bw * 1000000
@@ -81,14 +81,14 @@ def createQosQueues(net, linkInfo):
     for switch in net.switches:
         for intf in switch.intfList():
             if intf.link:
-                info('**** Adding Queue for %s interface\n' % intf.link)
                 n1 = intf.link.intf1.node
                 n2 = intf.link.intf2.node
                 target = n2 if n1 == switch else n1
                 switch_interface = intf.link.intf1 if n1 == switch else intf.link.intf2
                 bw = linkInfo[switch.name][target.name]
-                switch_intrface_name = switch_interface.name
-                createQosQueue(net, switch_intrface_name, bw)
+                switch_interface_name = switch_interface.name
+                info('**** Adding Queue for Link: %s Interface: %s. Bandwidth: %s\n' % (intf.link, switch_interface_name, bw, ))
+                createQosQueue(net, target, switch_interface_name, bw)
 
 
 def startNetwork():
@@ -98,7 +98,7 @@ def startNetwork():
 
     global net
     net = Mininet(topo=topo, link = TCLink,
-                  controller=lambda name: RemoteController(name, ip='172.17.194.79'),
+                  controller=lambda name: RemoteController(name, ip='192.168.56.1'),
                   listenPort=6633, autoSetMacs=True)
 
     info('** Starting the network\n')

@@ -28,6 +28,9 @@ REGULAR = 0
 PREMIUM = 1
 FREE = 2
 
+FIREWALL_PRIORITY = 200
+QOS_PRIORITY = 100
+
 class Controller(EventMixin):
     def __init__(self):
         self.listenTo(core.openflow)
@@ -47,10 +50,11 @@ class Controller(EventMixin):
         inport = event.port # the port where the packet enters
         dpid = event.dpid # switch id  
 
-        log.debug("** Switch %s: Recv %s from port %s" % (dpid, packet, inport))
+        # log.debug("** Switch %s: Recv %s from port %s" % (dpid, packet, inport))
 
         # Update Mac to Port table mapping
         def update_table():
+            if dpid not in self.macport: self.macport[dpid] = {}
             self.macport[dpid][src_mac] = inport
 
     	# install entries to the route table
@@ -58,6 +62,7 @@ class Controller(EventMixin):
             log.debug("** Switch %i: Installing flow %s.%i -> %s.%i", dpid, src_mac, inport, dst_mac, outport)
             msg = of.ofp_flow_mod()
             msg.match = of.ofp_match.from_packet(packet, inport)
+            msg.priority = QOS_PRIORITY
             msg.actions.append(of.ofp_action_enqueue(port = outport, queue_id = q_id))
             msg.data = event.ofp
             msg.idle_timeout = IDLE_TTL 
@@ -70,26 +75,28 @@ class Controller(EventMixin):
         def forward(message = None):
 
             # Step 1
-            if dpid not in self.macport: self.macport[dpid] = {}
             update_table();
 
             # Step 2
             if dst_mac.is_multicast:
-                flood("** Switch %s: Multicast -- flooding" % (dpid,))
+                flood()
                 return
 
             # Step 2a1 and 2b  
-            if (dst_mac not in self.macport[dpid]):
+            if dst_mac not in self.macport[dpid]:
                 flood("** Switch %s: Port for %s unknown -- flooding" % (dpid, dst_mac,))
                 return
 
             srcIP = None
+            dstIP = None
             if packet.type == packet.IP_TYPE:
                 srcIP = packet.payload.srcip
+                dstIP = packet.payload.dstip
             elif packet.type == packet.ARP_TYPE:
                 srcIP = packet.payload.protosrc
+                dstIP = packet.payload.protodst
 
-            q_id = get_q_id(str(srcIP))
+            q_id = get_q_id(str(srcIP), str(dstIP))
             outport = self.macport[dpid][dst_mac]
 
             # Step 2a2
@@ -98,12 +105,22 @@ class Controller(EventMixin):
             return
 
         # get the queue it should go into
-        def get_q_id(srcIP):
-            if srcIP is None:
+        def get_q_id(srcIP, dstIP):
+            src_q_id = get_ip_q_id(srcIP)
+            dst_q_id = get_ip_q_id(dstIP)
+            if src_q_id == PREMIUM or dst_q_id == PREMIUM:
+                return PREMIUM
+            elif src_q_id == REGULAR or dst_q_id == REGULAR:
                 return REGULAR
-            elif srcIP not in self.service_class: return FREE
-            else: return self.service_class[srcIP]
+            else:
+                return FREE
+
             
+        def get_ip_q_id(ip):
+            if ip is None:
+                return REGULAR
+            elif ip not in self.service_class: return FREE
+            else: return self.service_class[ip]
 
         # When it knows nothing about the destination, flood but don't install the rule
         def flood (message = None):
@@ -112,17 +129,19 @@ class Controller(EventMixin):
             # Create packet out message
             msg = of.ofp_packet_out() 
 
-            # Add an action to send to the all port
-            msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
-
             # Set the packet data same as the incoming one
             msg.data = event.ofp
 
             # Set the in_port so that the switch knows
             msg.in_port = inport
 
+            # Add an action to send to the all port
+            msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
+
             # Sends the packet out
             event.connection.send(msg)
+
+            log.debug("Switch %s: Flood packet, DstIP: %s" % (dpid, packet.payload.protodst))
             return
         
         # begin
@@ -162,6 +181,8 @@ class Controller(EventMixin):
             log.debug("** Switch %s: Adding Firewall Rule Src: %s, Dst: %s:%s" % (dpid, from_IP, to_IP, to_port))
             
             msg = of.ofp_flow_mod()
+
+            msg.priority = FIREWALL_PRIORITY
 
             # Set flow to send to no where
             msg.actions.append(of.ofp_action_output(port = of.OFPP_NONE))

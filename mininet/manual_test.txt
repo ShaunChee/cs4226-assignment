@@ -1,0 +1,169 @@
+(1) Test Connectivity
+
+pingallfull
+
+> all host reachable
+
+(2) Test learning switch
+
+pingallfull
+
+> all host reachable at a faster time (due to learning)
+
+(3) Test Fixing
+
+h1 ping h4
+
+> reachable
+
+link s1 s2 down
+h1 ping h4
+link s1 s2 up
+
+link s1 s4 down
+h1 ping h8
+link s1 s4 up
+
+> fails for awhile then success (due to timeout/fixing)
+> if it didn't fail for awhile it's probably because its taking the other route so try
+
+(3a) alternate route
+
+link s1 s4 down
+h1 ping h4
+link s1 s4 up
+
+link s1 s2 down
+h1 ping h8
+link s1 s2 up
+
+> fails for awhile then success (due to timeout/fixing)
+
+
+
+(4) Test Firewall
+
+xterm h1 h4 h6
+
+> 3 window pop up, do not close them until the end of (4).
+
+(h1) python -m SimpleHTTPServer 1001
+(h4) wget 10.0.0.1 
+(h6) wget 10.0.0.1
+
+> success
+
+(h4) python -m SimpleHTTPServer 1001
+(h1) wget 10.0.0.1 
+(h6) wget 10.0.0.1
+
+> success
+
+(h6) python -m SimpleHTTPServer 1001
+(h4) wget 10.0.0.1 
+(h1) wget 10.0.0.1
+
+> success
+
+(4.1) single ip address
+
+xterm h2
+
+(h2) pythom -m SimpleHTTPServer 80
+(h1) wget 10.0.0.2:80
+(h4) wget 10.0.0.2:80
+(h6) wget 10.0.0.2:80
+
+> fails (due to firewall)
+
+(h1) python -m SimpleHTTPServer 80
+(h4) python -m SimpleHTTPServer 80
+(h6) python -m SimpleHTTPServer 80
+(h2) wget 10.0.0.1:80
+(h2) wget 10.0.0.4:80
+(h2) wget 10.0.0.6:80
+
+> fails (due to firewall)
+> close h2 window
+
+(4.2) single ip address with port
+
+xterm h7
+
+(h7) python -m SimpleHTTPServer 1001
+(h1) wget 10.0.0.7:1001
+(h4) wget 10.0.0.7:1001
+(h6) wget 10.0.0.7:1001
+
+> fails (due to firewall)
+
+(h1) python -m SimpleHTTPServer 1001
+(h4) python -m SimpleHTTPServer 1001
+(h6) python -m SimpleHTTPServer 1001
+(h7) wget 10.0.0.1:1001
+(h7) wget 10.0.0.4:1001
+(h7) wget 10.0.0.6:1001 
+
+> success
+> close h7 window
+
+(4.3) pair ip with port 
+
+xterm h5
+
+(h4) python -m SimpleHTTPServer 80
+(h5) wget 10.0.0.4:80
+
+> fails (due to firewall)
+
+(h4) python -m SimpleHTTPServer 80
+(h1) wget 10.0.0.4:80
+
+> success
+
+(h5) python -m SimpleHTTPServer 80
+(h4) wget 10.0.0.5:80
+
+> success
+> Close all xterm window
+
+(5) Test QoS
+
+iperf h1 h4
+iperf h4 h1
+
+> 10 > bw > 8 
+
+iperf h1 h6
+iperf h6 h1
+
+> 10 > bw > 8
+
+iperf h1 h3
+iperf h3 h1
+
+> 5 > bw > 4  
+
+iperf h4 h3
+iperf h3 h4
+
+> 5 > bw > 4 
+
+iperf h8 h3
+iperf h3 h8
+
+> 3 > bw > 1.5
+
+iperf h5 h1
+iperf h1 h5
+
+> 5 > bw > 4 
+
+iperf h3 h5
+iperf h5 h3
+
+> 3 > bw > 1.5
+
+iperf h5 h7
+iperf h7 h6
+> 1 > bw > 0
