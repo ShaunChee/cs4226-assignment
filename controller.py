@@ -21,8 +21,9 @@ import datetime
 
 log = core.getLogger()
 
-IDLE_TTL = 5
-HARD_TTL = 10
+TTL = 5
+IDLE_TTL = TTL
+HARD_TTL = TTL
 
 REGULAR = 0
 PREMIUM = 1
@@ -38,6 +39,7 @@ class Controller(EventMixin):
 
         # 2D mac address to port mapping 
         self.macport = {}
+        self.macport_ttl = {}
 
         # Maps hosts to their service class
         self.service_class = {}
@@ -50,12 +52,30 @@ class Controller(EventMixin):
         inport = event.port # the port where the packet enters
         dpid = event.dpid # switch id  
 
+        srcIP = None
+        dstIP = None
+        if packet.type == packet.IP_TYPE:
+            srcIP = packet.payload.srcip
+            dstIP = packet.payload.dstip
+        elif packet.type == packet.ARP_TYPE:
+            srcIP = packet.payload.protosrc
+            dstIP = packet.payload.protodst
+
         # log.debug("** Switch %s: Recv %s from port %s" % (dpid, packet, inport))
 
         # Update Mac to Port table mapping
         def update_table():
-            if dpid not in self.macport: self.macport[dpid] = {}
+            if dpid not in self.macport: 
+                self.macport[dpid] = {}
+                self.macport_ttl[dpid] = {}
+
             self.macport[dpid][src_mac] = inport
+            self.macport_ttl[dpid][src_mac] = datetime.datetime.now()
+
+            if dst_mac in self.macport_ttl[dpid] and self.macport_ttl[dpid][dst_mac] + datetime.timedelta(seconds=TTL) <= datetime.datetime.now():
+                log.debug("** Switch %i: Timeout!" % dpid)
+                self.macport[dpid].pop(dst_mac)
+                self.macport_ttl[dpid].pop(dst_mac)
 
     	# install entries to the route table
         def install_enqueue(event, packet, outport, q_id):
@@ -79,22 +99,13 @@ class Controller(EventMixin):
 
             # Step 2
             if dst_mac.is_multicast:
-                flood()
+                flood("** Switch %s: Multicast -- %s" % (dpid, packet))
                 return
 
             # Step 2a1 and 2b  
             if dst_mac not in self.macport[dpid]:
                 flood("** Switch %s: Port for %s unknown -- flooding" % (dpid, dst_mac,))
                 return
-
-            srcIP = None
-            dstIP = None
-            if packet.type == packet.IP_TYPE:
-                srcIP = packet.payload.srcip
-                dstIP = packet.payload.dstip
-            elif packet.type == packet.ARP_TYPE:
-                srcIP = packet.payload.protosrc
-                dstIP = packet.payload.protodst
 
             q_id = get_q_id(str(srcIP), str(dstIP))
             outport = self.macport[dpid][dst_mac]
@@ -141,7 +152,7 @@ class Controller(EventMixin):
             # Sends the packet out
             event.connection.send(msg)
 
-            log.debug("Switch %s: Flood packet, DstIP: %s" % (dpid, packet.payload.protodst))
+            log.debug("Switch %s: Flood packet, DstIP: %s" % (dpid, dstIP))
             return
         
         # begin

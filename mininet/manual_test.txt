@@ -48,20 +48,20 @@ xterm h1 h4 h6
 > 3 window pop up, do not close them until the end of (4).
 
 (h1) python -m SimpleHTTPServer 1001
-(h4) wget 10.0.0.1 
-(h6) wget 10.0.0.1
+(h4) wget 10.0.0.1:1001
+(h6) wget 10.0.0.1:1001
 
 > success
 
 (h4) python -m SimpleHTTPServer 1001
-(h1) wget 10.0.0.1 
-(h6) wget 10.0.0.1
+(h1) wget 10.0.0.1:1001
+(h6) wget 10.0.0.1:1001
 
 > success
 
 (h6) python -m SimpleHTTPServer 1001
-(h4) wget 10.0.0.1 
-(h1) wget 10.0.0.1
+(h4) wget 10.0.0.1:1001
+(h1) wget 10.0.0.1:1001
 
 > success
 
@@ -96,6 +96,13 @@ xterm h7
 (h6) wget 10.0.0.7:1001
 
 > fails (due to firewall)
+
+(h7) python -m SimpleHTTPServer 1002
+(h1) wget 10.0.0.7:1002
+(h4) wget 10.0.0.7:1002
+(h6) wget 10.0.0.7:1002
+
+> success
 
 (h1) python -m SimpleHTTPServer 1001
 (h4) python -m SimpleHTTPServer 1001
@@ -165,5 +172,12 @@ iperf h5 h3
 > 3 > bw > 1.5
 
 iperf h5 h7
-iperf h7 h6
+iperf h7 h5
+
 > 1 > bw > 0
+
+xterm h4 h7 h8
+
+(7) iperf -s
+(4) iperf -c 10.0.0.7
+(8) iperf -c 10.0.0.7

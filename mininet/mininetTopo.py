@@ -6,7 +6,6 @@ Please add your matric number: A0155950B
 import os
 import sys
 import atexit
-import time
 from mininet.net import Mininet
 from mininet.log import setLogLevel, info
 from mininet.cli import CLI
@@ -26,6 +25,7 @@ class TreeTopo(Topo):
     def addLinkInfo(self, h1, h2, bw):
         if h1 not in self.linkInfo:
             self.linkInfo[h1] = {}
+
         self.linkInfo[h1][h2] = int(bw)
 
     def readFromFile(self, filename):
@@ -48,19 +48,6 @@ class TreeTopo(Topo):
                 self.addLinkInfo(h1,h2,bw)
                 self.addLinkInfo(h2,h1,bw)
                 self.addLink(h1, h2)
-
-    
-    # You can write other functions as you need.
-
-    # Add hosts
-    # > self.addHost('h%d' % [HOST NUMBER])
-
-    # Add switches
-    # > sconfig = {'dpid': "%016x" % [SWITCH NUMBER]}
-    # > self.addSwitch('s%d' % [SWITCH NUMBER], **sconfig)
-
-    # Add links
-    # > self.addLink([HOST1], [HOST2])
 
 def createQosQueue(net, target, switch_interface, bw):
 
