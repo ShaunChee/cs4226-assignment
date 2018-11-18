@@ -1,5 +1,19 @@
 # Mininet-POX assignment
 
+## How to Setup
+
+Once you have your virtualbox with Mininet set up.
+
+Run the following command:
+```
+$ cd ./mininet
+$ ./transfer.sh
+$ ./connect.sh
+$ ./run_mininet.sh
+```
+
+Then in another terminal execute `pox.py` and set the correct `controller.py`
+
 ## Manual Test
 
 ### Test Connectivity
