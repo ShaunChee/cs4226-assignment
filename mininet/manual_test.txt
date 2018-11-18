@@ -53,15 +53,15 @@ xterm h1 h4 h6
 
 > success
 
-(h4) python -m SimpleHTTPServer 1001
-(h1) wget 10.0.0.1:1001
-(h6) wget 10.0.0.1:1001
+(h4) python -m SimpleHTTPServer 2001
+(h1) wget 10.0.0.4:2001
+(h6) wget 10.0.0.4:2001
 
 > success
 
-(h6) python -m SimpleHTTPServer 1001
-(h4) wget 10.0.0.1:1001
-(h1) wget 10.0.0.1:1001
+(h6) python -m SimpleHTTPServer 3001
+(h4) wget 10.0.0.6:3001
+(h1) wget 10.0.0.6:3001
 
 > success
 
@@ -76,12 +76,12 @@ xterm h2
 
 > fails (due to firewall)
 
-(h1) python -m SimpleHTTPServer 80
-(h4) python -m SimpleHTTPServer 80
-(h6) python -m SimpleHTTPServer 80
-(h2) wget 10.0.0.1:80
-(h2) wget 10.0.0.4:80
-(h2) wget 10.0.0.6:80
+(h1) python -m SimpleHTTPServer 1001
+(h4) python -m SimpleHTTPServer 2001
+(h6) python -m SimpleHTTPServer 3001
+(h2) wget 10.0.0.1:1001
+(h2) wget 10.0.0.4:2001
+(h2) wget 10.0.0.6:3001
 
 > fails (due to firewall)
 > close h2 window
