@@ -21,7 +21,7 @@ import datetime
 
 log = core.getLogger()
 
-TTL = 5
+TTL = 30
 IDLE_TTL = TTL
 HARD_TTL = TTL
 
@@ -46,34 +46,36 @@ class Controller(EventMixin):
         
     def _handle_PacketIn (self, event):  
 
-        packet = event.parsed
-        src_mac = packet.src # packet's src mac
-        dst_mac = packet.dst # packet's dst mac
-        inport = event.port # the port where the packet enters
-        dpid = event.dpid # switch id  
-
-        srcIP = None
-        dstIP = None
-        if packet.type == packet.IP_TYPE:
-            srcIP = packet.payload.srcip
-            dstIP = packet.payload.dstip
-        elif packet.type == packet.ARP_TYPE:
-            srcIP = packet.payload.protosrc
-            dstIP = packet.payload.protodst
-
-        # log.debug("** Switch %s: Recv %s from port %s" % (dpid, packet, inport))
+        def host_ip_to_mac(hostip):
+            '''
+            Its a hacky part which skips the learning of a host's MAC address
+            '''
+            hostid = int(str(hostip).split('.')[-1])
+            hostmac = EthAddr("%012x" % (hostid & 0xffFFffFFffFF,))
+            return hostmac
 
         # Update Mac to Port table mapping
-        def update_table():
+        def learn_table():
+            '''
+            If the switch don't have a MAC to PORT table, create one
+            If the source MAC does not have a mapping in MAC to PORT table, create one.
+            '''
             if dpid not in self.macport: 
                 self.macport[dpid] = {}
                 self.macport_ttl[dpid] = {}
 
-            self.macport[dpid][src_mac] = inport
-            self.macport_ttl[dpid][src_mac] = datetime.datetime.now()
+            if src_mac not in self.macport[dpid]:
+                log.debug("** Switch %i: Learning... MAC: %s, Port: %s" % (dpid, src_mac, inport))
+                self.macport[dpid][src_mac] = inport
+                self.macport_ttl[dpid][src_mac] = datetime.datetime.now()
 
+        def unlear_table():
+            '''
+            If the destination MAC to PORT entry has expired 
+            then remove it.
+            '''
             if dst_mac in self.macport_ttl[dpid] and self.macport_ttl[dpid][dst_mac] + datetime.timedelta(seconds=TTL) <= datetime.datetime.now():
-                log.debug("** Switch %i: Timeout!" % dpid)
+                log.debug("** Switch %i: Timeout!... Unlearn MAC: %s, Port: %s" % (dpid, dst_mac, self.macport[dpid][dst_mac]))
                 self.macport[dpid].pop(dst_mac)
                 self.macport_ttl[dpid].pop(dst_mac)
 
@@ -88,53 +90,58 @@ class Controller(EventMixin):
             msg.idle_timeout = IDLE_TTL 
             msg.hard_timeout = HARD_TTL
             event.connection.send(msg)
-            log.debug("** Switch %i: Rule sent: Outport %i, Queue %i\n", dpid, outport, q_id)
+            log.debug("** Switch %i: Rule sent: Outport %i, Queue %i", dpid, outport, q_id)
             return
 
     	# Check the packet and decide how to route the packet
         def forward(message = None):
+            '''
+            If it is meant to be broadcasted
+                then broadcast it
+            else if we don't know which specific port to send to
+                then broadcast it also
+            else 
+                install enqueue flow entry 
+            '''
 
-            # Step 1
-            update_table();
+            if dst_mac.is_multicast: return flood("** Switch %s: Multicast -- %s" % (dpid, packet))
+            if dst_mac not in self.macport[dpid]: return flood("** Switch %s: Port for %s unknown -- flooding" % (dpid, dst_mac,))
 
-            # Step 2
-            if dst_mac.is_multicast:
-                flood("** Switch %s: Multicast -- %s" % (dpid, packet))
-                return
-
-            # Step 2a1 and 2b  
-            if dst_mac not in self.macport[dpid]:
-                flood("** Switch %s: Port for %s unknown -- flooding" % (dpid, dst_mac,))
-                return
-
-            q_id = get_q_id(str(srcIP), str(dstIP))
+            q_id = get_q_id(str(src_ip), str(dst_ip))
             outport = self.macport[dpid][dst_mac]
-
-            # Step 2a2
             install_enqueue(event, packet, outport, q_id)
 
             return
 
         # get the queue it should go into
-        def get_q_id(srcIP, dstIP):
-            src_q_id = get_ip_q_id(srcIP)
-            dst_q_id = get_ip_q_id(dstIP)
-            if src_q_id == PREMIUM or dst_q_id == PREMIUM:
-                return PREMIUM
-            elif src_q_id == REGULAR or dst_q_id == REGULAR:
-                return REGULAR
-            else:
-                return FREE
+        def get_q_id(src_ip, dst_ip):
+            '''
+            Get the Queue ID of the 2 IP and 
+            returns the Queue ID of the higher class
+            '''
+            src_q_id = get_ip_q_id(src_ip)
+            dst_q_id = get_ip_q_id(dst_ip)
+            if src_q_id == PREMIUM or dst_q_id == PREMIUM: return PREMIUM
+            elif src_q_id == REGULAR or dst_q_id == REGULAR: return REGULAR
+            else: return FREE
 
             
         def get_ip_q_id(ip):
-            if ip is None:
-                return REGULAR
+            '''
+            Get Queue ID of desired IP address
+            If there's no record, its in the FREE class 
+            Otherwise return recorded value
+            '''
+            if ip is None: return REGULAR
             elif ip not in self.service_class: return FREE
             else: return self.service_class[ip]
 
         # When it knows nothing about the destination, flood but don't install the rule
         def flood (message = None):
+            '''
+            Extracted from l2 learning switch sample code
+            Basically send the packet to all the ports except the incoming one.
+            '''
             log.debug(message)
 
             # Create packet out message
@@ -147,16 +154,50 @@ class Controller(EventMixin):
             msg.in_port = inport
 
             # Add an action to send to the all port
-            msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
+            msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
 
             # Sends the packet out
             event.connection.send(msg)
 
-            log.debug("Switch %s: Flood packet, DstIP: %s" % (dpid, dstIP))
+            log.debug("Switch %s: Flood packet, DstIP: %s" % (dpid, dst_ip))
             return
         
-        # begin
+
+        '''
+        1) Extract information from the packet... namely:
+            packet: the actual packet
+            src_mac: source's MAC address
+            dst_mac: destination's MAC address
+            inport: the port which the packet came in from
+            dpid: switch
+            src_ip: source's IP address
+            dst_ip: destination's IP address
+
+        2) If this is an ARP request packet(i.e. we have to flood it), but we know the 
+        MAC address of the destination, send to the port targeting the MAC address 
+        instead of flooding to prevent infinite loops
+        '''
+        packet = event.parsed
+        src_mac = packet.src
+        dst_mac = packet.dst
+        inport = event.port
+        dpid = event.dpid 
+
+        src_ip = None
+        dst_ip = None
+        if packet.type == packet.IP_TYPE:
+            src_ip = packet.payload.srcip
+            dst_ip = packet.payload.dstip
+        elif packet.type == packet.ARP_TYPE:
+            src_ip = packet.payload.protosrc
+            dst_ip = packet.payload.protodst
+            if dst_mac.is_multicast:
+                dst_mac = host_ip_to_mac(dst_ip)
+
+        # Step 1
+        learn_table();
         forward()
+        unlear_table()
 
 
     def _handle_ConnectionUp(self, event):
